@@ -93,6 +93,17 @@ jobs:
         run: |
           tcb login --apiKeyId "${{ secrets.TCB_SECRET_ID }}" --apiKey "${{ secrets.TCB_SECRET_KEY }}"
 
+      - name: Debug CLI Help
+        run: |
+          echo "=== CLI 版本信息 ==="
+          tcb --version
+          echo ""
+          echo "=== tcb run --help ==="
+          tcb run --help || true
+          echo ""
+          echo "=== tcb run deploy --help ==="
+          tcb run deploy --help || true
+
       - name: Deploy Backend
         run: |
           if [ ! -d "backend" ] || [ ! -f "backend/Dockerfile" ]; then
@@ -102,10 +113,25 @@ jobs:
           cd backend
           echo "=== 部署后端 ==="
 
-          # 使用 tcb run deploy 命令（CLI 3.2.2 支持）
-          # 参考官方文档: https://cloud.tencent.com/document/product/1243/76108
-          # 必须使用 -e 和 -s 简写参数
-          tcb run deploy             -e ${{ secrets.TCB_ENV_ID }}             -s material-api             --containerPort 8080             --path .             --cpu 0.25             --mem 0.5             --minNum 1             --maxNum 5             --yes
+          # 方法1: 使用环境变量传递（避免参数解析问题）
+          export TCB_ENV_ID="${{ secrets.TCB_ENV_ID }}"
+          echo "环境ID: ${TCB_ENV_ID}"
+
+          # 尝试使用 tcb framework deploy（另一种部署方式）
+          echo "尝试使用 tcb framework deploy..."
+          tcb framework deploy             -e ${{ secrets.TCB_ENV_ID }}             --yes || {
+              echo "framework deploy 失败，尝试 run deploy..."
+
+              # 方法2: 使用 tcb run deploy 带完整参数
+              tcb run deploy                 -e "${{ secrets.TCB_ENV_ID }}"                 -s material-api                 --containerPort 8080                 --path .                 --cpu 0.25                 --mem 0.5                 --minNum 1                 --maxNum 5                 --yes || {
+                  echo "run deploy 也失败，尝试使用配置文件..."
+
+                  # 方法3: 创建 cloudbaserc.json 配置文件
+                  echo '{"version":"2.0","envId":"'${{ secrets.TCB_ENV_ID }}'","framework":{"name":"material-api","plugins":{"client":{"use":"@cloudbase/framework-plugin-container","inputs":{"serviceName":"material-api","servicePath":"/","localPath":".","containerPort":8080}}}}}'> cloudbaserc.json
+
+                  tcb framework deploy -e ${{ secrets.TCB_ENV_ID }} --yes
+                }
+            }
         env:
           TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
           TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
