@@ -1,34 +1,21 @@
 {
-  "version": "3.0",
-  "envId": "${TCB_ENV_ID}",
-  "region": "ap-shanghai",
-  "$schema": "https://framework-1258016615.tcloudbaseapp.com/schema/latest.json",
-  "app": {
-    "serviceName": "material-system",
-    "framework": "static",
-    "buildCommand": "",
-    "outputDir": "./frontend",
-    "deployPath": "/",
-    "envVariables": {
-      "NODE_ENV": "production"
-    }
-  },
-  "cloudrun": {
-    "services": [
-      {
-        "name": "material-api",
-        "path": "./backend",
-        "containerPort": 8080,
-        "cpu": 0.25,
-        "mem": 0.5,
-        "minNum": 1,
-        "maxNum": 5,
-        "envVariables": {
-          "PORT": "8080",
-          "DB_DIR": "/app/data",
-          "ALLOW_ORIGINS": "*"
+  "version": "2.0",
+  "envId": "material-system-d5f7ufn08b049d4c",
+  "framework": {
+    "name": "material-system",
+    "plugins": {
+      "server": {
+        "use": "@cloudbase/framework-plugin-container",
+        "inputs": {
+          "serviceName": "material-api",
+          "localPath": "./backend",
+          "containerPort": 8080,
+          "cpu": 0.25,
+          "mem": 0.5,
+          "minNum": 1,
+          "maxNum": 5
         }
       }
-    ]
+    }
   }
 }
