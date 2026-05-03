@@ -1,0 +1,192 @@
+name: Deploy to CloudBase
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: '部署目标 (frontend/backend/both)'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - frontend
+          - backend
+          - both
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+  BACKEND_SERVICE_NAME: 'material-api'
+  BACKEND_PORT: '8080'
+
+jobs:
+  # ============================================================
+  # JOB 1: 部署前端到静态网站托管
+  # ============================================================
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    if: github.event.inputs.deploy_target == 'frontend' || github.event.inputs.deploy_target == 'both' || github.event.inputs.deploy_target == ''
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install CloudBase CLI V3
+        run: npm install -g @cloudbase/cli@latest
+
+      - name: Configure API Base URL
+        run: |
+          # 获取后端服务地址（使用 CloudBase 默认域名格式）
+          BACKEND_URL="https://${{ env.BACKEND_SERVICE_NAME }}-${{ secrets.TCB_ENV_ID }}.ap-shanghai.app.tcloudbase.com"
+
+          # 替换前端代码中的默认 API 地址
+          if [ -f "frontend/index.html" ]; then
+            sed -i "s|let API_BASE = localStorage.getItem('mms_api_base') || 'http://localhost:8100';|let API_BASE = localStorage.getItem('mms_api_base') || '${BACKEND_URL}';|g" frontend/index.html
+            echo "✅ API Base URL configured: ${BACKEND_URL}"
+          fi
+
+      - name: Deploy to Static Hosting
+        run: |
+          # 登录 CloudBase（使用 API 密钥）
+          tcb login --apiKeyId "${{ secrets.TCB_SECRET_ID }}" --apiKey "${{ secrets.TCB_SECRET_KEY }}"
+
+          # 部署到静态网站托管根目录
+          tcb hosting deploy ./frontend / --env-id ${{ secrets.TCB_ENV_ID }} --yes
+
+          echo "✅ Frontend deployed successfully"
+        env:
+          TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
+          TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
+
+      - name: Verify Frontend Deployment
+        run: |
+          # 获取静态托管域名
+          STATIC_URL="https://${{ secrets.TCB_ENV_ID }}.tcloudbaseapp.com"
+          echo "🌐 Frontend URL: ${STATIC_URL}"
+
+          # 简单健康检查
+          sleep 5
+          curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" "${STATIC_URL}" || true
+
+  # ============================================================
+  # JOB 2: 部署后端到云托管 (CloudBase Run)
+  # ============================================================
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    needs: deploy-frontend
+    if: github.event.inputs.deploy_target == 'backend' || github.event.inputs.deploy_target == 'both' || github.event.inputs.deploy_target == ''
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (for CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install CloudBase CLI V3
+        run: npm install -g @cloudbase/cli@latest
+
+      - name: Login to CloudBase
+        run: |
+          tcb login --apiKeyId "${{ secrets.TCB_SECRET_ID }}" --apiKey "${{ secrets.TCB_SECRET_KEY }}"
+
+      - name: Deploy Backend Service
+        run: |
+          cd backend
+
+          echo "🚀 Deploying backend service: ${{ env.BACKEND_SERVICE_NAME }}"
+
+          # 使用 tcb run deploy 创建或更新服务（V3 语法）
+          tcb run deploy             --env-id ${{ secrets.TCB_ENV_ID }}             --service-name ${{ env.BACKEND_SERVICE_NAME }}             --container-port ${{ env.BACKEND_PORT }}             --path .             --cpu 0.25             --mem 0.5             --min-num 1             --max-num 5             --env-params "PORT=${{ env.BACKEND_PORT }}&DB_DIR=/app/data&ALLOW_ORIGINS=*"             --no-confirm             --json
+
+          echo "✅ Backend deployed successfully"
+        env:
+          TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
+          TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
+
+      - name: Configure CORS
+        run: |
+          # 获取前端域名
+          FRONTEND_URL="https://${{ secrets.TCB_ENV_ID }}.tcloudbaseapp.com"
+
+          echo "🔧 Configuring CORS for: ${FRONTEND_URL}"
+
+          # 添加安全域名（CORS 白名单）
+          tcb cors add "${FRONTEND_URL}" --env-id ${{ secrets.TCB_ENV_ID }} --yes || true
+
+          # 同时添加自定义域名（如果有的话）
+          # tcb cors add "https://your-custom-domain.com" --env-id ${{ secrets.TCB_ENV_ID }} --yes || true
+        env:
+          TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
+          TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
+
+      - name: Verify Backend Deployment
+        run: |
+          BACKEND_URL="https://${{ env.BACKEND_SERVICE_NAME }}-${{ secrets.TCB_ENV_ID }}.ap-shanghai.app.tcloudbase.com"
+          echo "🌐 Backend URL: ${BACKEND_URL}"
+
+          # 等待服务启动
+          echo "⏳ Waiting for service to start..."
+          sleep 45
+
+          # 健康检查
+          for i in {1..5}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${BACKEND_URL}/api/health" || echo "000")
+            if [ "$STATUS" == "200" ]; then
+              echo "✅ Backend health check passed! (HTTP 200)"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "⚠️ Backend health check failed after 5 attempts"
+          exit 1
+
+  # ============================================================
+  # JOB 3: 部署结果通知
+  # ============================================================
+  notify:
+    name: Deployment Notification
+    runs-on: ubuntu-latest
+    needs: [deploy-frontend, deploy-backend]
+    if: always()
+
+    steps:
+      - name: Check deployment status
+        run: |
+          FRONTEND_STATUS="${{ needs.deploy-frontend.result }}"
+          BACKEND_STATUS="${{ needs.deploy-backend.result }}"
+
+          echo "📊 Deployment Summary:"
+          echo "  Frontend: ${FRONTEND_STATUS}"
+          echo "  Backend: ${BACKEND_STATUS}"
+
+          if [ "${FRONTEND_STATUS}" == "success" ] && [ "${BACKEND_STATUS}" == "success" ]; then
+            echo ""
+            echo "🎉 All deployments successful!"
+            echo ""
+            echo "🔗 Access URLs:"
+            echo "  Frontend: https://${{ secrets.TCB_ENV_ID }}.tcloudbaseapp.com"
+            echo "  Backend:  https://${{ env.BACKEND_SERVICE_NAME }}-${{ secrets.TCB_ENV_ID }}.ap-shanghai.app.tcloudbase.com"
+            echo "  Health:   https://${{ env.BACKEND_SERVICE_NAME }}-${{ secrets.TCB_ENV_ID }}.ap-shanghai.app.tcloudbase.com/api/health"
+          else
+            echo ""
+            echo "❌ Deployment failed or partially failed"
+            [ "${FRONTEND_STATUS}" != "success" ] && echo "  - Frontend deployment failed"
+            [ "${BACKEND_STATUS}" != "success" ] && echo "  - Backend deployment failed"
+            exit 1
+          fi
