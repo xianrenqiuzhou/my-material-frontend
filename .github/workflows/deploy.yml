@@ -53,7 +53,7 @@ jobs:
           fi
 
           echo "✅ 开始部署前端..."
-          # 使用 -e 指定环境ID（CLI明确要求）
+          # 使用 -e 指定环境ID（CLI 3.2.2 要求）
           tcb hosting deploy ./frontend /             -e ${{ secrets.TCB_ENV_ID }}             --yes
         env:
           TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
@@ -103,8 +103,9 @@ jobs:
           cd backend
           echo "=== 部署后端 ==="
 
-          # 只使用 -e 和完整长参数，没有任何备用语法
-          tcb run deploy             -e ${{ secrets.TCB_ENV_ID }}             --service-name material-api             --container-port 8080             --path .             --cpu 0.25             --mem 0.5             --min-num 1             --max-num 5             --yes
+          # 使用 CLI 3.2.2 官方文档支持的参数格式（驼峰命名）
+          # 参考: https://cloud.tencent.com/document/product/1243/76108
+          tcb run deploy             -e ${{ secrets.TCB_ENV_ID }}             -s material-api             --containerPort 8080             --path .             --cpu 0.25             --mem 0.5             --minNum 1             --maxNum 5             --yes
         env:
           TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
           TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
