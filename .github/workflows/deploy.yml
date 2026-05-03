@@ -5,11 +5,14 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+# 强制使用 Node.js 24，消除弃用警告
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  NODE_VERSION: '24'
 
 jobs:
+  # ============================================================
+  # 部署前端到静态网站托管
+  # ============================================================
   deploy-frontend:
     name: Deploy Frontend
     runs-on: ubuntu-latest
@@ -17,77 +20,118 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
       - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-      - name: Check files
+      - name: Check repository structure
         run: |
-          echo "=== 检查文件结构 ==="
+          echo "=========================================="
+          echo "当前目录结构:"
           ls -la
           echo ""
-          echo "=== frontend 目录 ==="
-          ls -la frontend/ 2>/dev/null || echo "❌ frontend 目录不存在"
+          echo "frontend 目录:"
+          ls -la frontend/ 2>/dev/null || echo "❌ frontend 目录不存在!"
+          echo ""
+          echo "backend 目录:"
+          ls -la backend/ 2>/dev/null || echo "⚠️ backend 目录不存在"
+          echo "=========================================="
 
       - name: Install CloudBase CLI
         run: |
+          echo "Installing CloudBase CLI..."
           npm install -g @cloudbase/cli@latest
+          echo "CLI Version:"
           tcb --version
 
       - name: Login to CloudBase
         run: |
+          echo "Logging in to CloudBase..."
           tcb login --apiKeyId "${{ secrets.TCB_SECRET_ID }}" --apiKey "${{ secrets.TCB_SECRET_KEY }}"
+          echo "✅ Login successful"
 
       - name: Deploy Frontend
         run: |
-          echo "=== 开始部署前端 ==="
-          if [ ! -d "frontend" ]; then
-            echo "❌ frontend 目录不存在，创建并复制文件..."
-            mkdir -p frontend
-            # 如果根目录有 index.html，复制到 frontend
-            if [ -f "index.html" ]; then
-              cp index.html frontend/
-            fi
-          fi
+          echo "=========================================="
+          echo "开始部署前端..."
 
-          # 确保 frontend 目录有文件
-          if [ ! -f "frontend/index.html" ]; then
-            echo "❌ frontend/index.html 不存在"
+          # 检查 frontend 目录
+          if [ ! -d "frontend" ]; then
+            echo "❌ 错误: frontend 目录不存在!"
+            echo "请确保仓库根目录有 frontend/ 文件夹，且包含 index.html"
             exit 1
           fi
 
-          echo "✅ 发现 frontend/index.html，开始部署..."
+          # 检查 index.html
+          if [ ! -f "frontend/index.html" ]; then
+            echo "❌ 错误: frontend/index.html 不存在!"
+            echo "frontend 目录内容:"
+            ls -la frontend/
+            exit 1
+          fi
 
-          # 使用新版 CLI 语法部署
-          tcb hosting deploy ./frontend /             --envId ${{ secrets.TCB_ENV_ID }}             --yes || {
-              echo "尝试备用语法..."
-              tcb hosting deploy ./frontend /                 -e ${{ secrets.TCB_ENV_ID }}                 --yes
-            }
+          echo "✅ 发现 frontend/index.html"
+          echo "文件大小: $(wc -c < frontend/index.html) bytes"
+
+          # 部署到静态托管
+          echo "执行: tcb hosting deploy ./frontend / --envId ${{ secrets.TCB_ENV_ID }}"
+          tcb hosting deploy ./frontend /             --envId ${{ secrets.TCB_ENV_ID }}             --yes
+
+          echo "✅ 前端部署完成"
+          echo "=========================================="
         env:
           TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
           TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
 
+  # ============================================================
+  # 部署后端到云托管 (仅当前端成功时执行)
+  # ============================================================
   deploy-backend:
     name: Deploy Backend
     runs-on: ubuntu-latest
     needs: deploy-frontend
-    if: always() && needs.deploy-frontend.result == 'success'
+    # 即使前端失败也尝试部署后端，方便排查问题
+    if: always()
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
       - name: Setup Node.js 24
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
       - name: Check backend files
         run: |
-          echo "=== 检查后端文件 ==="
-          ls -la backend/ 2>/dev/null || echo "❌ backend 目录不存在"
+          echo "=========================================="
+          echo "检查后端文件..."
+          if [ ! -d "backend" ]; then
+            echo "⚠️ backend 目录不存在，跳过后端部署"
+            echo "如需部署后端，请创建 backend/ 目录并包含 Dockerfile"
+            exit 0
+          fi
+
+          echo "backend 目录内容:"
+          ls -la backend/
+
+          if [ ! -f "backend/Dockerfile" ]; then
+            echo "⚠️ backend/Dockerfile 不存在，跳过后端部署"
+            exit 0
+          fi
+
+          echo "✅ 发现 backend/Dockerfile"
+          echo "=========================================="
 
       - name: Install CloudBase CLI
         run: |
@@ -101,36 +145,52 @@ jobs:
       - name: Deploy Backend
         run: |
           if [ ! -d "backend" ] || [ ! -f "backend/Dockerfile" ]; then
-            echo "⚠️ backend 目录或 Dockerfile 不存在，跳过"
+            echo "跳过后端部署（文件不存在）"
             exit 0
           fi
 
           cd backend
-          echo "=== 后端文件列表 ==="
+          echo "=========================================="
+          echo "开始部署后端..."
+          echo "当前目录: $(pwd)"
+          echo "文件列表:"
           ls -la
 
-          echo "=== 开始部署后端 ==="
+          echo ""
+          echo "执行部署命令..."
           tcb run deploy             --envId ${{ secrets.TCB_ENV_ID }}             --serviceName material-api             --containerPort 8080             --path .             --cpu 0.25             --mem 0.5             --minNum 1             --maxNum 5             --yes || {
-              echo "尝试备用语法..."
-              tcb run deploy                 -e ${{ secrets.TCB_ENV_ID }}                 -s material-api                 -p 8080                 --path .                 --yes
+              echo "❌ 部署命令执行失败"
+              echo "请检查 CloudBase 云托管是否已开通"
+              exit 1
             }
+
+          echo "✅ 后端部署完成"
+          echo "=========================================="
         env:
           TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
           TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
 
-  notify:
-    name: Deployment Notification
+  # ============================================================
+  # 部署结果汇总
+  # ============================================================
+  summary:
+    name: Deployment Summary
     runs-on: ubuntu-latest
     needs: [deploy-frontend, deploy-backend]
     if: always()
 
     steps:
-      - name: Summary
+      - name: Print Results
         run: |
-          echo "=== 部署结果 ==="
-          echo "Frontend: ${{ needs.deploy-frontend.result }}"
-          echo "Backend: ${{ needs.deploy-backend.result }}"
+          echo "=========================================="
+          echo "🎉 部署流程执行完毕"
+          echo ""
+          echo "结果汇总:"
+          echo "  前端部署: ${{ needs.deploy-frontend.result }}"
+          echo "  后端部署: ${{ needs.deploy-backend.result }}"
           echo ""
           echo "访问地址:"
-          echo "Frontend: https://${{ secrets.TCB_ENV_ID }}.tcloudbaseapp.com"
-          echo "Backend: https://material-api-${{ secrets.TCB_ENV_ID }}.ap-shanghai.app.tcloudbase.com"
+          echo "  前端: https://${{ secrets.TCB_ENV_ID }}.tcloudbaseapp.com"
+          echo "  后端: https://material-api-${{ secrets.TCB_ENV_ID }}.ap-shanghai.app.tcloudbase.com"
+          echo "  健康检查: https://material-api-${{ secrets.TCB_ENV_ID }}.ap-shanghai.app.tcloudbase.com/api/health"
+          echo "=========================================="
