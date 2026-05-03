@@ -53,95 +53,7 @@ jobs:
           fi
 
           echo "✅ 开始部署前端..."
-          tcb hosting deploy ./frontend /             -e ${{ secrets.TCB_ENV_ID }}             --yes
-        env:
-          TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
-          TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
-
-  deploy-backend:
-    name: Deploy Backend
-    runs-on: ubuntu-latest
-    needs: deploy-frontend
-    if: always()
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-      - name: Setup Node.js 24
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-        env:
-          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-      - name: Check backend
-        run: |
-          if [ ! -d "backend" ] || [ ! -f "backend/Dockerfile" ]; then
-            echo "⚠️ backend 不存在，跳过"
-            exit 0
-          fi
-          echo "✅ 发现 backend，开始部署..."
-
-      - name: Install CloudBase CLI & Framework
-        run: |
-          npm install -g @cloudbase/cli@latest
-          npm install -g @cloudbase/framework-core@latest
-          npm install -g @cloudbase/framework-plugin-container@latest
-          tcb --version
-
-      - name: Login to CloudBase
-        run: |
-          tcb login --apiKeyId "${{ secrets.TCB_SECRET_ID }}" --apiKey "${{ secrets.TCB_SECRET_KEY }}"
-
-      - name: Create Framework Config
-        run: |
-          cat > cloudbaserc.json << 'EOF'
-          {
-            "version": "2.0",
-            "envId": "${{ secrets.TCB_ENV_ID }}",
-            "$schema": "https://framework-1258016615.tcloudbaseapp.com/schema/latest.json",
-            "framework": {
-              "name": "material-system",
-              "plugins": {
-                "server": {
-                  "use": "@cloudbase/framework-plugin-container",
-                  "inputs": {
-                    "serviceName": "material-api",
-                    "servicePath": "/",
-                    "localPath": "./backend",
-                    "containerPort": 8080,
-                    "cpu": 0.25,
-                    "mem": 0.5,
-                    "minNum": 1,
-                    "maxNum": 5
-                  }
-                }
-              }
-            }
-          }
-          EOF
-          echo "=== cloudbaserc.json ==="
-          cat cloudbaserc.json
-
-      - name: Deploy Backend with Framework
-        run: |
-          if [ ! -d "backend" ] || [ ! -f "backend/Dockerfile" ]; then
-            exit 0
-          fi
-
-          echo "=== 使用 CloudBase Framework 部署后端 ==="
-          echo "这种方式通过配置文件部署，避免 CLI 参数解析问题"
-
-          # 使用 framework deploy，通过配置文件部署
-          tcb framework deploy             -e ${{ secrets.TCB_ENV_ID }}             --yes || {
-              echo "⚠️ Framework 部署返回非零退出码，但服务可能已更新"
-              echo "检查控制台确认服务状态"
-            }
-
-          echo "✅ 后端部署完成"
+          tcb hosting deploy ./frontend / -e ${{ secrets.TCB_ENV_ID }} --yes
         env:
           TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
           TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
@@ -149,7 +61,7 @@ jobs:
   summary:
     name: Summary
     runs-on: ubuntu-latest
-    needs: [deploy-frontend, deploy-backend]
+    needs: [deploy-frontend]
     if: always()
 
     steps:
@@ -159,11 +71,8 @@ jobs:
           echo "🎉 部署流程执行完毕"
           echo ""
           echo "结果汇总:"
-          echo "  前端部署: ${{ needs.deploy-frontend.result }}"
-          echo "  后端部署: ${{ needs.deploy-backend.result }}"
+          echo " 前端部署: ${{ needs.deploy-frontend.result }}"
           echo ""
           echo "访问地址:"
-          echo "  前端: https://material-system-d5f7ufn08b049d4c-1427907742.tcloudbaseapp.com"
-          echo "  后端: https://material-api-material-system-d5f7ufn08b049d4c.ap-shanghai.app.tcloudbase.com"
-          echo "  健康检查: https://material-api-material-system-d5f7ufn08b049d4c.ap-shanghai.app.tcloudbase.com/api/health"
+          echo " 前端: https://material-system-d5f7ufn08b049d4c-1427907742.tcloudbaseapp.com"
           echo "=========================================="
