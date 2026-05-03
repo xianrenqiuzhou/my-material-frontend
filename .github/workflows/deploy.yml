@@ -53,11 +53,14 @@ jobs:
           fi
 
           echo "✅ 开始部署前端..."
-          # 使用 -e 指定环境ID（CLI 3.2.2 要求）
-          tcb hosting deploy ./frontend /             -e ${{ secrets.TCB_ENV_ID }}             --yes
+          echo "环境ID长度: ${#TCB_ENV_ID}"
+          echo "环境ID前5字符: ${TCB_ENV_ID:0:5}"
+
+          tcb hosting deploy ./frontend /             -e ${TCB_ENV_ID}             --yes
         env:
           TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
           TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
+          TCB_ENV_ID: ${{ secrets.TCB_ENV_ID }}
 
   deploy-backend:
     name: Deploy Backend
@@ -102,13 +105,21 @@ jobs:
 
           cd backend
           echo "=== 部署后端 ==="
+          echo "检查环境变量..."
+          echo "TCB_ENV_ID 长度: ${#TCB_ENV_ID}"
+          echo "TCB_ENV_ID 是否存在: $([ -n "$TCB_ENV_ID" ] && echo 'YES' || echo 'NO')"
 
-          # 使用 CLI 3.2.2 官方文档支持的参数格式（驼峰命名）
-          # 参考: https://cloud.tencent.com/document/product/1243/76108
-          tcb run deploy             -e ${{ secrets.TCB_ENV_ID }}             -s material-api             --containerPort 8080             --path .             --cpu 0.25             --mem 0.5             --minNum 1             --maxNum 5             --yes
+          if [ -z "$TCB_ENV_ID" ]; then
+            echo "❌ TCB_ENV_ID 为空! 请检查 Secrets 配置"
+            exit 1
+          fi
+
+          echo "开始部署..."
+          tcb run deploy             -e ${TCB_ENV_ID}             -s material-api             --containerPort 8080             --path .             --cpu 0.25             --mem 0.5             --minNum 1             --maxNum 5             --yes
         env:
           TCB_SECRET_ID: ${{ secrets.TCB_SECRET_ID }}
           TCB_SECRET_KEY: ${{ secrets.TCB_SECRET_KEY }}
+          TCB_ENV_ID: ${{ secrets.TCB_ENV_ID }}
 
   summary:
     name: Summary
@@ -122,7 +133,3 @@ jobs:
           echo "部署结果:"
           echo "  前端: ${{ needs.deploy-frontend.result }}"
           echo "  后端: ${{ needs.deploy-backend.result }}"
-          echo ""
-          echo "访问地址:"
-          echo "  前端: https://${{ secrets.TCB_ENV_ID }}.tcloudbaseapp.com"
-          echo "  后端: https://material-api-${{ secrets.TCB_ENV_ID }}.ap-shanghai.app.tcloudbase.com"
