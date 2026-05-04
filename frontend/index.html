@@ -327,6 +327,8 @@
   .profit-bar .fill.pos { background:var(--success); }
   .profit-bar .fill.neg { background:var(--danger); }
 </style>
+<base target="_blank">
+<base target="_blank">
 </head>
 <body>
 
@@ -426,6 +428,9 @@ uvicorn main:app --host 0.0.0.0 --port 8100</pre>
       </div>
       <div class="nav-item" data-view="ai" onclick="showAIAnalysis()">
         <span class="icon">&#129302;</span> AI智能分析
+      </div>
+      <div class="nav-item" data-view="typeSettings" onclick="showView('typeSettings')">
+        <span class="icon">&#127991;</span> 类型设置
       </div>
       <div class="nav-item" data-view="presets" onclick="showView('presets')">
         <span class="icon">&#128203;</span> 物料预设
@@ -580,6 +585,10 @@ uvicorn main:app --host 0.0.0.0 --port 8100</pre>
         <div class="form-group">
           <label>经办人</label>
           <input class="form-control" id="s-operator" placeholder="姓名" disabled style="background:var(--gray-100);color:var(--gray-500);cursor:not-allowed">
+        </div>
+        <div class="form-group">
+          <label>订单/单号</label>
+          <input class="form-control" id="s-order" placeholder="如 PO-2025-001">
         </div>
         <div class="form-group">
           <label>原因/用途</label>
@@ -818,11 +827,16 @@ function autoStatus(qty, min) {
 }
 
 let customTypeRules = [];  // 用户自定义类型规则 [{type, keywords:[]}]
+let customMaterialTypes = []; // 用户自定义物料类型名称列表
 let customUnits = ['个','片','条','套','卷','批','根','块']; // 可配置的单位列表
 
 // 物料预设配置（名称 → 规格列表 → 供应商列表）
 let materialPresets = [];  // [{ name: "物料名称", specs: ["规格1","规格2"], suppliers: ["供应商1"] }]
 let codeCounter = 0; // 从0开始，由getNextCode自动计算
+
+// 多设备数据同步：当前数据版本号（用于定时检测远端是否有更新）
+let currentDataVersion = null;
+let dataSyncTimer = null; // 定时同步检测器
 
 /** 获取下一个可用编码（基于当前已有物料最大序号） */
 function getNextCode() {
@@ -863,24 +877,31 @@ function _doSave() {
     logs:            logs.slice(0, 100).map(l => ({...l, time: l.time.toISOString()})),
     codeCounter,
     customTypeRules,
+    customMaterialTypes,
     customUnits,
     materialPresets,
-    subAccounts:     currentUser.subAccounts || [],
-    navPermissions:  currentUser.navPermissions || null
+    subAccounts:     currentUser._isSubAccount ? undefined : (currentUser.subAccounts || []),
+    navPermissions:  currentUser._isSubAccount ? undefined : (currentUser.navPermissions || null)
   };
   // 子账号保存到父账号的数据中
   const dataPhone = currentUser._isSubAccount ? currentUser._parentPhone : null;
   const query = dataPhone ? `?owner=${encodeURIComponent(dataPhone)}` : '';
   const headers = dataPhone ? { 'X-Data-Owner': dataPhone } : {};
   apiFetch('/api/data' + query, { method: 'PUT', headers, body: JSON.stringify(payload) })
-    .then(() => {
-      // 后端保存成功，同时备份到 IndexedDB（离线保障）
+    .then(res => {
+      // 后端保存成功，更新本地数据版本号（避免自己保存后触发同步刷新）
+      if (res && res.dataVersion) {
+        currentDataVersion = res.dataVersion;
+      }
+      // 同时备份到 IndexedDB（离线保障）
+      if (!currentUser) return;
       const idbKey = dataPhone || currentUser.phone;
       if (idb) dbPut('userdata', { phone: idbKey, ...payload }).catch(() => {});
     })
     .catch(e => {
       console.warn('后端保存失败，回退到 IndexedDB:', e);
       // 后端不可用，保存到 IndexedDB（使用父账号的 key）
+      if (!currentUser) return;
       const idbKey = dataPhone || currentUser.phone;
       if (idb) {
         dbPut('userdata', { phone: idbKey, ...payload })
@@ -903,10 +924,21 @@ async function loadUserData() {
       transactions = (d.transactions || []).map(t => ({...t, time: new Date(t.time), paidAt: t.paidAt ? new Date(t.paidAt) : null}));
       logs         = (d.logs || []).map(l => ({...l, time: new Date(l.time)}));
       codeCounter      = d.codeCounter || 1000;
-      customTypeRules  = d.customTypeRules || [];
+      customTypeRules    = d.customTypeRules || [];
+      customMaterialTypes = d.customMaterialTypes || [];
       customUnits      = d.customUnits || ['个','片','条','套','卷','批','根','块'];
       materialPresets  = d.materialPresets || [];
-      // 子账号和权限通过 /api/subaccounts 单独加载，不从此处覆盖
+      // 加载主账号的子账号列表和权限配置（跨设备同步）
+      if (!currentUser._isSubAccount) {
+        if (Array.isArray(d.subAccounts)) {
+          currentUser.subAccounts = d.subAccounts;
+        }
+        if (d.navPermissions !== undefined) {
+          currentUser.navPermissions = d.navPermissions;
+        }
+      }
+      // 记录数据版本号（用于多设备同步检测）
+      currentDataVersion = d.dataVersion || null;
       addLog('登录', currentUser.name + ' 登录，加载 ' + materials.length + ' 条物料');
     } else {
       // 新用户：兼容旧 IndexedDB 数据迁移
@@ -917,6 +949,16 @@ async function loadUserData() {
         transactions = (idbData.transactions || []).map(t => ({...t, time: new Date(t.time), paid: t.paid !== undefined ? t.paid : (t.dir !== 'in'), paidAt: t.paidAt ? new Date(t.paidAt) : null}));
         logs         = (idbData.logs || []).map(l => ({...l, time: new Date(l.time)}));
         codeCounter  = idbData.codeCounter || 1000;
+        customMaterialTypes = idbData.customMaterialTypes || [];
+        // 从 IndexedDB 加载子账号和权限（离线同步）
+        if (!currentUser._isSubAccount) {
+          if (idbData.subAccounts && idbData.subAccounts.length > 0) {
+            currentUser.subAccounts = idbData.subAccounts;
+          }
+          if (idbData.navPermissions) {
+            currentUser.navPermissions = idbData.navPermissions;
+          }
+        }
         saveUserDataNow();   // 迁移到后端
         addLog('数据迁移', '从 IndexedDB 迁移至后端数据库，共 ' + materials.length + ' 条物料');
       } else {
@@ -934,6 +976,16 @@ async function loadUserData() {
       transactions = (idbData.transactions || []).map(t => ({...t, time: new Date(t.time), paid: t.paid !== undefined ? t.paid : (t.dir !== 'in'), paidAt: t.paidAt ? new Date(t.paidAt) : null}));
       logs         = (idbData.logs || []).map(l => ({...l, time: new Date(l.time)}));
       codeCounter  = idbData.codeCounter || 1000;
+      customMaterialTypes = idbData.customMaterialTypes || [];
+      // 从 IndexedDB 加载子账号和权限（离线模式）
+      if (!currentUser._isSubAccount) {
+        if (idbData.subAccounts && idbData.subAccounts.length > 0) {
+          currentUser.subAccounts = idbData.subAccounts;
+        }
+        if (idbData.navPermissions) {
+          currentUser.navPermissions = idbData.navPermissions;
+        }
+      }
       addLog('离线加载', '从 IndexedDB 加载 ' + materials.length + ' 条物料');
     } else {
       initDemoData();
@@ -1043,7 +1095,7 @@ function showView(view) {
   document.querySelectorAll('.nav-item').forEach((el,i) => {
     el.classList.toggle('active', el.getAttribute('onclick') === `showView('${view}')`);
   });
-  const titles = { stockIn:'入库管理', stockOut:'出库管理', customerPayment:'客户结账', stockHistory:'出入库记录', import:'批量导入', presets:'物料预设', log:'操作日志', payment:'供应商结款', profit:'财务统计', users:'用户管理', subAccounts:'子账号管理' };
+  const titles = { stockIn:'入库管理', stockOut:'出库管理', customerPayment:'客户结账', stockHistory:'出入库记录', import:'批量导入', typeSettings:'类型设置', presets:'物料预设', log:'操作日志', payment:'供应商结款', profit:'财务统计', users:'用户管理', subAccounts:'子账号管理' };
   document.getElementById('topbar-title').textContent = titles[view] || '物料管理';
 
   const topbarActions = document.querySelector('.topbar-actions');
@@ -1056,7 +1108,7 @@ function showView(view) {
   }
   renderTopbarUser();
 
-  const renderers = { stockIn: renderStockIn, stockOut: renderStockOut, customerPayment: renderCustomerPayment, stockHistory: renderStockHistory, import: renderImport, presets: renderPresetManager, log: renderLog, payment: renderPayment, profit: renderProfit, users: renderUsers, subAccounts: renderSubAccounts };
+  const renderers = { stockIn: renderStockIn, stockOut: renderStockOut, customerPayment: renderCustomerPayment, stockHistory: renderStockHistory, import: renderImport, typeSettings: renderTypeSettings, presets: renderPresetManager, log: renderLog, payment: renderPayment, profit: renderProfit, users: renderUsers, subAccounts: renderSubAccounts };
   if (renderers[view]) renderers[view]();
 }
 
@@ -1285,7 +1337,7 @@ function renderPresetManager() {
             <div style="border:1px solid var(--gray-200);border-radius:8px;margin-bottom:10px;overflow:hidden">
               <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)">
                 <div style="display:flex;align-items:center;gap:10px">
-                  <span style="font-weight:600;font-size:14px">${p.name}</span> <span class="badge badge-primary" style="margin-left:8px;font-size:11px">${p.type || '未分类'}</span> <span class="badge badge-primary" style="margin-left:8px;font-size:11px">${p.type || '未分类'}</span>
+                  <span style="font-weight:600;font-size:14px">${p.name}</span> <span class="badge badge-primary" style="margin-left:8px;font-size:11px">${p.type || '未分类'}</span> <span class="badge badge-success" style="margin-left:8px;font-size:11px">${p.unit || '件'}</span>
                   <span style="font-size:11px;color:var(--gray-400)">${p.specs.length}种规格 / ${p.suppliers.length}家供应商</span>
                 </div>
                 <div style="display:flex;gap:4px">
@@ -1332,16 +1384,30 @@ function renderPresetManager() {
             <label style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px;display:block">物料类型</label>
             <select class="form-control" id="preset-type">
               <option value="">未分类</option>
-              <option value="电芯类">电芯类</option>
-              <option value="电池组类">电池组类</option>
-              <option value="BMS芯片类">BMS芯片类</option>
-              <option value="连接器类">连接器类</option>
-              <option value="线束类">线束类</option>
-              <option value="结构件类">结构件类</option>
-              <option value="PCB类">PCB类</option>
-              <option value="电子元器件类">电子元器件类</option>
-              <option value="其他">其他</option>
+              <optgroup label="自定义类型" id="preset-type-custom-group"></optgroup>
+              <optgroup label="内置类型">
+                <option value="电芯类">电芯类</option>
+                <option value="电池组类">电池组类</option>
+                <option value="BMS芯片类">BMS芯片类</option>
+                <option value="连接器类">连接器类</option>
+                <option value="线束类">线束类</option>
+                <option value="结构件类">结构件类</option>
+                <option value="PCB类">PCB类</option>
+                <option value="电子元器件类">电子元器件类</option>
+                <option value="其他">其他</option>
+              </optgroup>
             </select>
+          </div>
+          <div class="form-group" style="margin-bottom:14px">
+            <label style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px;display:block">单位</label>
+            <div style="display:flex;gap:8px">
+              <select class="form-control" id="preset-unit" style="flex:1" onchange="if(this.value==='__custom__'){document.getElementById('preset-unit-custom').style.display='';this.style.display='none';document.getElementById('preset-unit-custom').focus();}">
+                <option value="">-- 请选择或自定义 --</option>
+                ${(materialPresets.find(p=>p.unit && !customUnits.includes(p.unit))?[materialPresets.find(p=>p.unit && !customUnits.includes(p.unit)).unit]:[]).concat(customUnits).filter((v,i,a)=>a.indexOf(v)===i).map(u=>`<option value="${u}">${u}</option>`).join('')}
+                <option value="__custom__">+ 自定义单位</option>
+              </select>
+              <input class="form-control" id="preset-unit-custom" placeholder="输入自定义单位" style="display:none;flex:1" onblur="if(!this.value.trim()){this.style.display='none';document.getElementById('preset-unit').style.display='';}">
+            </div>
           </div>
           <div class="form-group" style="margin-bottom:14px">
             <label style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px;display:block">规格型号（每行一个）</label>
@@ -1365,15 +1431,43 @@ let editingPresetIdx = -1;
 function openPresetForm(idx) {
   editingPresetIdx = idx !== undefined ? idx : -1;
   document.getElementById('preset-form-title').textContent = editingPresetIdx >= 0 ? '编辑物料预设' : '添加物料预设';
+  
+  // Populate custom types in the preset type select
+  const customGroup = document.getElementById('preset-type-custom-group');
+  if (customGroup) {
+    const builtIn = ['电芯类','电池组类','BMS芯片类','连接器类','线束类','结构件类','PCB类','电子元器件类','其他'];
+    const ruleTypes = customTypeRules.map(r => r.type).filter(t => !builtIn.includes(t));
+    const settingTypes = customMaterialTypes.filter(t => !builtIn.includes(t) && !ruleTypes.includes(t));
+    const customNames = [...new Set([...ruleTypes, ...settingTypes])];
+    customGroup.innerHTML = customNames.map(t => `<option value="${t}">${t}</option>`).join('');
+  }
   if (editingPresetIdx >= 0) {
     const p = materialPresets[editingPresetIdx];
     document.getElementById('preset-name').value = p.name;
     document.getElementById('preset-type').value = p.type || '';
+    const unitSelect = document.getElementById('preset-unit');
+    const unitCustom = document.getElementById('preset-unit-custom');
+    if (p.unit && unitSelect && !Array.from(unitSelect.options).some(o => o.value === p.unit)) {
+      unitSelect.value = '';
+      unitCustom.value = p.unit;
+      unitCustom.style.display = '';
+      unitSelect.style.display = 'none';
+    } else if (unitSelect) {
+      unitSelect.value = p.unit || '';
+      unitCustom.value = '';
+      unitCustom.style.display = 'none';
+      unitSelect.style.display = '';
+    }
     document.getElementById('preset-specs').value = p.specs.join('\n');
     document.getElementById('preset-suppliers').value = p.suppliers.join('\n');
   } else {
     document.getElementById('preset-name').value = '';
     document.getElementById('preset-type').value = '';
+    const unitSelect = document.getElementById('preset-unit');
+    const unitCustom = document.getElementById('preset-unit-custom');
+    if (unitSelect) unitSelect.value = '';
+    if (unitCustom) { unitCustom.value = ''; unitCustom.style.display = 'none'; }
+    if (unitSelect) unitSelect.style.display = '';
     document.getElementById('preset-specs').value = '';
     document.getElementById('preset-suppliers').value = '';
   }
@@ -1388,15 +1482,18 @@ function savePreset() {
   const name = document.getElementById('preset-name').value.trim();
   const type = document.getElementById('preset-type').value.trim();
   if (!name) { showToast('请输入物料名称', 'warning'); return; }
+  let unit = document.getElementById('preset-unit-custom').value.trim();
+  if (!unit) unit = document.getElementById('preset-unit').value.trim();
+  if (unit === '__custom__') unit = '';
   const specs = document.getElementById('preset-specs').value.split('\n').map(s => s.trim()).filter(Boolean);
   const suppliers = document.getElementById('preset-suppliers').value.split('\n').map(s => s.trim()).filter(Boolean);
 
   if (editingPresetIdx >= 0) {
-    materialPresets[editingPresetIdx] = { name, type, specs, suppliers };
+    materialPresets[editingPresetIdx] = { name, type, unit, specs, suppliers };
     showToast('物料预设已更新', 'success');
   } else {
     if (materialPresets.find(p => p.name === name)) { showToast('该物料名称已存在', 'warning'); return; }
-    materialPresets.push({ name, type, specs, suppliers });
+    materialPresets.push({ name, type, unit, specs, suppliers });
     showToast('物料预设已添加', 'success');
   }
   addLog('物料预设', `${editingPresetIdx >= 0 ? '编辑' : '新增'}：${name}`);
@@ -1407,6 +1504,138 @@ function savePreset() {
 
 function editPreset(idx) {
   openPresetForm(idx);
+}
+
+// ============================================================
+// TYPE SETTINGS VIEW - 物料类型客制化设置
+// ============================================================
+function renderTypeSettings() {
+  const builtIn = ['电芯类','电池组类','BMS芯片类','连接器类','线束类','结构件类','PCB类','电子元器件类','其他'];
+  const allTypes = [...new Set([...builtIn, ...customMaterialTypes, ...customTypeRules.map(r => r.type)])];
+  const typeUsage = {};
+  materials.forEach(m => {
+    typeUsage[m.type] = (typeUsage[m.type] || 0) + 1;
+  });
+
+  document.getElementById('content').innerHTML = `
+    <div style="max-width:720px">
+      <div class="rules-panel">
+        <div class="rules-header">
+          <span class="rules-title">物料类型设置</span>
+          <span style="font-size:11px;color:var(--gray-400)">共 ${customMaterialTypes.length} 个自定义类型</span>
+        </div>
+        <p style="font-size:13px;color:var(--gray-500);margin-bottom:16px">自定义物料类型将出现在新增/编辑物料、物料预设等页面的类型下拉框中。内置类型不可删除。</p>
+
+        <!-- Add new type -->
+        <div style="display:flex;gap:8px;margin-bottom:16px">
+          <input class="form-control" id="new-type-name" placeholder="输入新的物料类型名称" style="flex:1" onkeydown="if(event.key==='Enter')addCustomType()">
+          <button class="btn btn-primary" onclick="addCustomType()">&#43; 添加类型</button>
+        </div>
+
+        <!-- Custom types list -->
+        <div style="font-size:13px;font-weight:600;color:var(--gray-700);margin-bottom:10px">自定义类型列表</div>
+        ${customMaterialTypes.length === 0 ? `<div style="text-align:center;padding:20px;color:var(--gray-400);font-size:13px">暂无自定义类型，请在上方添加</div>` :
+          customMaterialTypes.map((t, i) => `
+            <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--gray-50);border-radius:6px;margin-bottom:6px;border:1px solid var(--gray-200)">
+              <span style="min-width:90px;font-weight:600;font-size:13px;color:#7c3aed;background:#f5f3ff;padding:2px 8px;border-radius:10px">${t}</span>
+              <span style="font-size:12px;color:var(--gray-400);flex:1">使用中：${typeUsage[t] || 0} 个物料</span>
+              <button class="duration-btn" onclick="editCustomTypeName(${i})" style="color:var(--primary);border-color:#bfdbfe">重命名</button>
+              <button class="duration-btn" onclick="deleteCustomTypeName(${i})" style="color:var(--danger);border-color:#fecaca">删除</button>
+            </div>
+          `).join('')
+        }
+
+        <!-- Built-in types (readonly) -->
+        <div style="font-size:13px;font-weight:600;color:var(--gray-700);margin:16px 0 10px">内置类型（不可修改）</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          ${builtIn.map(t => `
+            <span style="display:inline-flex;align-items:center;gap:4px;background:var(--gray-100);color:var(--gray-600);padding:3px 10px;border-radius:6px;font-size:12px;border:1px solid var(--gray-200)">
+              ${t}
+              ${typeUsage[t] ? `<span style="color:var(--primary);font-weight:600">(${typeUsage[t]})</span>` : ''}
+            </span>
+          `).join('')}
+        </div>
+
+        <!-- All types usage summary -->
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--gray-200)">
+          <div style="font-size:13px;font-weight:600;color:var(--gray-700);margin-bottom:10px">类型使用统计</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">
+            ${allTypes.filter(t => typeUsage[t]).sort((a,b) => (typeUsage[b]||0)-(typeUsage[a]||0)).map(t => `
+              <div style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:6px;padding:8px 10px;text-align:center">
+                <div style="font-size:12px;font-weight:600;color:var(--gray-700)">${t}</div>
+                <div style="font-size:11px;color:var(--gray-400)">${typeUsage[t] || 0} 个物料</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function addCustomType() {
+  const inp = document.getElementById('new-type-name');
+  const val = inp.value.trim();
+  if (!val) { showToast('请输入类型名称', 'warning'); return; }
+  const builtIn = ['电芯类','电池组类','BMS芯片类','连接器类','线束类','结构件类','PCB类','电子元器件类','其他'];
+  if (builtIn.includes(val)) { showToast('该类型已是内置类型', 'warning'); return; }
+  if (customMaterialTypes.includes(val)) { showToast('该类型已存在', 'warning'); return; }
+  customMaterialTypes.push(val);
+  inp.value = '';
+  addLog('类型设置', `新增自定义类型：${val}`);
+  showToast(`已添加类型「${val}」`, 'success');
+  renderTypeSettings();
+  saveUserData();
+}
+
+function deleteCustomTypeName(idx) {
+  const name = customMaterialTypes[idx];
+  const usedCount = materials.filter(m => m.type === name).length;
+  if (usedCount > 0) {
+    if (!confirm(`「${name}」正在被 ${usedCount} 个物料使用，删除后这些物料的类型将变为"其他"。确认删除？`)) return;
+    // Update materials using this type
+    materials.forEach(m => {
+      if (m.type === name) { m.type = '其他'; m.typeMode = 'manual'; m.updatedAt = new Date(); }
+    });
+  } else {
+    if (!confirm(`确认删除自定义类型「${name}」？`)) return;
+  }
+  customMaterialTypes.splice(idx, 1);
+  // Also remove from customTypeRules if any
+  const ruleIdx = customTypeRules.findIndex(r => r.type === name);
+  if (ruleIdx >= 0) customTypeRules.splice(ruleIdx, 1);
+  addLog('类型设置', `删除自定义类型：${name}${usedCount > 0 ? '，影响 ' + usedCount + ' 个物料' : ''}`);
+  showToast(`已删除类型「${name}」${usedCount > 0 ? '，相关物料已置为"其他"' : ''}`, 'success');
+  renderTypeSettings();
+  saveUserData();
+}
+
+function editCustomTypeName(idx) {
+  const oldName = customMaterialTypes[idx];
+  const newName = prompt(`重命名类型「${oldName}」为：`, oldName);
+  if (!newName || newName.trim() === '' || newName.trim() === oldName) return;
+  const val = newName.trim();
+  const builtIn = ['电芯类','电池组类','BMS芯片类','连接器类','线束类','结构件类','PCB类','电子元器件类','其他'];
+  if (builtIn.includes(val)) { showToast('不能与内置类型重名', 'warning'); return; }
+  if (customMaterialTypes.includes(val)) { showToast('该类型名称已存在', 'warning'); return; }
+
+  // Update customMaterialTypes
+  customMaterialTypes[idx] = val;
+
+  // Update customTypeRules
+  const rule = customTypeRules.find(r => r.type === oldName);
+  if (rule) rule.type = val;
+
+  // Update materials using this type
+  let updatedCount = 0;
+  materials.forEach(m => {
+    if (m.type === oldName) { m.type = val; m.updatedAt = new Date(); updatedCount++; }
+  });
+
+  addLog('类型设置', `重命名：${oldName} → ${val}${updatedCount > 0 ? '，更新 ' + updatedCount + ' 个物料' : ''}`);
+  showToast(`已重命名为「${val}」${updatedCount > 0 ? '，更新 ' + updatedCount + ' 个物料' : ''}`, 'success');
+  renderTypeSettings();
+  saveUserData();
 }
 
 function deletePreset(idx) {
@@ -1540,7 +1769,10 @@ function refreshTypeSelect() {
   const sel = document.getElementById('f-type');
   if (!sel) return;
   const builtIn = ['电芯类','电池组类','BMS芯片类','连接器类','线束类','结构件类','PCB类','电子元器件类','其他'];
-  const customNames = customTypeRules.map(r => r.type).filter(t => !builtIn.includes(t));
+  // 合并自定义类型（来自类型设置）和自定义规则中的类型
+  const ruleTypes = customTypeRules.map(r => r.type).filter(t => !builtIn.includes(t));
+  const settingTypes = customMaterialTypes.filter(t => !builtIn.includes(t) && !ruleTypes.includes(t));
+  const customNames = [...new Set([...ruleTypes, ...settingTypes])];
   sel.innerHTML = `<option value="">自动识别</option>`
     + (customNames.length ? `<optgroup label="自定义类型">${customNames.map(t=>`<option value="${t}">${t}</option>`).join('')}</optgroup>` : '')
     + `<optgroup label="内置类型">${builtIn.map(t=>`<option value="${t}">${t}</option>`).join('')}</optgroup>`;
@@ -1907,7 +2139,7 @@ async function saveSubAccount(idx) {
   if (idx === -1) {
     currentUser.subAccounts.push({
       phone, name: name || phone, password: pass,
-      permissions: getDefaultNavPermissions(), createdAt: new Date().toISOString()
+      permissions: getSubAccountDefaultPermissions(), createdAt: new Date().toISOString()
     });
     showToast('子账号创建成功', 'success');
   } else {
@@ -1926,8 +2158,15 @@ async function saveSubAccount(idx) {
 /** 删除子账号 */
 async function deleteSubAccount(idx) {
   if (!confirm('确认删除该子账号？')) return;
+  const sub = currentUser.subAccounts[idx];
+  const subPhone = sub ? sub.phone : null;
   currentUser.subAccounts.splice(idx, 1);
   await saveCurrentUserWithSubs();
+  // 清理当前设备上该子账号的残留 token（防止同一设备上子账号仍能自动登录）
+  if (subPhone) {
+    localStorage.removeItem('currentUser_sub_' + subPhone);
+    localStorage.removeItem('mms_token_sub_' + subPhone);
+  }
   showToast('子账号已删除', 'success');
   renderSubAccounts();
   applyNavPermissions();
@@ -2801,6 +3040,18 @@ function editInboundTx(txId) {
   document.getElementById('stock-modal').classList.add('show');
 }
 
+/** 根据物料所有入库记录重新计算加权均价 */
+function recalcMaterialAvgPrice(material) {
+  const inTxs = transactions.filter(t => t.dir === 'in' && t.materialId === material.id);
+  let totalValue = 0;
+  let totalQty = 0;
+  inTxs.forEach(t => {
+    totalValue += (t.price || 0) * t.qty;
+    totalQty += t.qty;
+  });
+  return totalQty > 0 ? Math.round((totalValue / totalQty) * 10000) / 10000 : 0;
+}
+
 function saveEditedInboundTx(txId) {
   const txIdx = transactions.findIndex(t => t.id == txId);
   if (txIdx === -1) return;
@@ -2809,6 +3060,7 @@ function saveEditedInboundTx(txId) {
   if (!m) return;
 
   const oldQty = tx.qty;
+  const oldPrice = tx.price || 0;
   const newQty = parseInt(document.getElementById('s-qty').value);
   if (!newQty || newQty <= 0) { showToast('请输入有效数量', 'warning'); return; }
   
@@ -2820,6 +3072,9 @@ function saveEditedInboundTx(txId) {
   }
   
   const newPrice = parseFloat(document.getElementById('s-price').value) || 0;
+  
+  // 记录编辑前的均价用于日志
+  const oldAvgPrice = m.price || 0;
   
   // 更新库存
   m.qty += diff;
@@ -2836,8 +3091,17 @@ function saveEditedInboundTx(txId) {
   tx.notes = document.getElementById('s-notes').value.trim();
   tx.paid = document.getElementById('s-paid').value === '1';
   
-  addLog('编辑入库', `${m.code} "${m.name}"，入库记录修改，原数量 ${oldQty} → 新数量 ${newQty}`);
-  showToast('入库记录修改成功', 'success');
+  // === 重新计算加权均价（编辑入库后必须全量重算）===
+  const newAvgPrice = recalcMaterialAvgPrice(m);
+  tx.avgPriceBefore = oldAvgPrice;
+  tx.avgPriceAfter = newAvgPrice;
+  m.price = newAvgPrice;
+  
+  const avgChangeStr = oldAvgPrice !== newAvgPrice
+    ? ` 均价 ${oldAvgPrice > 0 ? '¥'+oldAvgPrice.toFixed(4) : '新建'} → ¥${newAvgPrice.toFixed(4)}`
+    : '';
+  addLog('编辑入库', `${m.code} "${m.name}"，入库记录修改，数量 ${oldQty}→${newQty} 单价 ¥${oldPrice.toFixed(2)}→¥${tx.price.toFixed(2)}${avgChangeStr}`);
+  showToast(`入库记录修改成功${avgChangeStr ? '，均价已更新' : ''}`, 'success');
   
   closeStockModal();
   updateAlertBadge();
@@ -3373,6 +3637,7 @@ const ALL_NAV_VIEWS = {
   customerPayment:{ label: '客户结账',      icon: '&#128176;' },
   profit:         { label: '财务统计',      icon: '&#128200;' },
   ai:             { label: 'AI智能分析',    icon: '&#129302;' },
+  typeSettings:   { label: '类型设置',      icon: '&#127991;' },
   presets:        { label: '物料预设',      icon: '&#128203;' },
   import:         { label: '批量导入',      icon: '&#128229;' },
   log:            { label: '操作日志',      icon: '&#128196;' },
@@ -3384,7 +3649,14 @@ const ALL_NAV_VIEWS = {
 /** 获取默认全部权限（管理员/主账号使用） */
 function getDefaultNavPermissions() {
   const perms = {};
-  Object.keys(ALL_NAV_VIEWS).forEach(k => perms[k] = true);
+  Object.keys(ALL_NAV_VIEWS).forEach(k => perms[k] = true);  // 默认全部授权
+  return perms;
+}
+
+/** 获取子账号默认权限（新增子账号时使用：全部不授权） */
+function getSubAccountDefaultPermissions() {
+  const perms = {};
+  Object.keys(ALL_NAV_VIEWS).forEach(k => perms[k] = false);  // 默认全部不授权
   return perms;
 }
 
@@ -3410,6 +3682,7 @@ async function findSubAccount(phone) {
   // 1. 先从后端 API 查找（跨浏览器同步）
   try {
     const result = await apiFetch('/api/subaccounts/' + encodeURIComponent(phone));
+    console.log('[findSubAccount] 后端返回:', result);
     if (result && result.subAccount) {
       return {
         parentUser: {
@@ -3417,19 +3690,26 @@ async function findSubAccount(phone) {
           name: result.parentName || result.parentPhone,
           expireAt: result.expireAt
         },
-        subAccount: result.subAccount
+        subAccount: result.subAccount,
+        token: result.token
       };
     }
   } catch (e) {
-    // 后端不可用，回退到本地存储
+    console.warn('[findSubAccount] 后端 API 失败:', e.message);
   }
 
   // 2. 从 localStorage 查找（当前浏览器）
   const allLocalUsers = getAllStoredUsers();
+  console.log('[findSubAccount] localStorage 用户数:', allLocalUsers.length);
   for (const user of allLocalUsers) {
     if (user.subAccounts && user.subAccounts.length > 0) {
       const sub = user.subAccounts.find(s => s.phone === phone);
-      if (sub) return { parentUser: user, subAccount: sub };
+      if (sub) {
+        // 尝试获取父账号的 token 作为备用（子账号登录需要）
+        const parentToken = localStorage.getItem('mms_token_' + user.phone) || localStorage.getItem('mms_token');
+        console.log('[findSubAccount] 本地找到子账号，父token:', parentToken ? '有' : '无');
+        return { parentUser: user, subAccount: sub, token: parentToken };
+      }
     }
   }
   return null;
@@ -3849,7 +4129,7 @@ function generateOutboundOrderNo() {
 
 /** 根据当前视图刷新对应渲染函数（统一入口避免多处重复定义 refreshMap） */
 function refreshCurrentView() {
-  const map = { list: renderList, stockIn: renderStockIn, stockOut: renderStockOut, payment: renderPayment, stockHistory: renderStockHistory, profit: renderProfit, customerPayment: renderCustomerPayment };
+  const map = { list: renderList, stockIn: renderStockIn, stockOut: renderStockOut, payment: renderPayment, stockHistory: renderStockHistory, profit: renderProfit, customerPayment: renderCustomerPayment, typeSettings: renderTypeSettings };
   if (map[currentView]) map[currentView]();
 }
 
@@ -4175,16 +4455,22 @@ let currentStockDir = '';
 let selectedPresetName = '';
 let selectedPresetSpec = '';
 let selectedPresetSupplier = '';
+let selectedPresetType = '';
+let selectedPresetUnit = '';
 
 function getCombinedPresets() {
-  const presets = Array.isArray(materialPresets) ? materialPresets.filter(p => p && p.name).map(p => ({ ...p, specs: [...(p.specs || [])], suppliers: [...(p.suppliers || [])] })) : [];
+  const presets = Array.isArray(materialPresets) ? materialPresets.filter(p => p && p.name).map(p => ({ ...p, type: p.type || '', unit: p.unit || '', specs: [...(p.specs || [])], suppliers: [...(p.suppliers || [])] })) : [];
   materials.forEach(m => {
     if (!m.name) return;
     let p = presets.find(x => x.name === m.name);
     if (!p) {
-      p = { name: m.name, specs: [], suppliers: [] };
+      p = { name: m.name, type: m.type || '', unit: m.unit || '', specs: [], suppliers: [] };
       presets.push(p);
     }
+    // If material has a type and preset doesn't, inherit from material
+    if (m.type && !p.type) p.type = m.type;
+    // If material has a unit and preset doesn't, inherit from material
+    if (m.unit && !p.unit) p.unit = m.unit;
     const specToAdd = m.spec || '(无规格)';
     if (!p.specs.includes(specToAdd)) p.specs.push(specToAdd);
     
@@ -4199,6 +4485,8 @@ function showPresetSelector(dir) {
   selectedPresetName = '';
   selectedPresetSpec = '';
   selectedPresetSupplier = '';
+  selectedPresetType = '';
+  selectedPresetUnit = '';
 
   const presets = getCombinedPresets();
 
@@ -4243,8 +4531,17 @@ function renderPresetDropdowns() {
         <label style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px;display:block">物料名称</label>
         <select class="form-control" id="preset-sel-name" onchange="onPresetNameChange()">
           <option value="">-- 请选择物料名称 --</option>
-          ${nameOptions.map(n => `<option value='${n}' ${selectedPresetName===n?'selected':''}>${n}</option>`).join('')}
+          ${nameOptions.map(n => {
+            const p = presets.find(x => x.name === n);
+            const typeLabel = p && p.type ? ` [${p.type}]` : '';
+            return `<option value='${n}' ${selectedPresetName===n?'selected':''}>${n}${typeLabel}</option>`;
+          }).join('')}
         </select>
+        ${selectedPresetName ? `
+        <div style="margin-top:6px;font-size:12px">
+          <span style="color:var(--gray-500)">预设类型：</span>
+          <span style="background:#f5f3ff;color:#7c3aed;padding:2px 8px;border-radius:10px;font-weight:600">${selectedPresetType || autoClassifyType(selectedPresetName) || '未分类'}</span>
+        </div>` : ''}
       </div>
 
       <div class="form-group" style="margin-bottom:14px">
@@ -4261,6 +4558,23 @@ function renderPresetDropdowns() {
           <option value="">-- 请选择供应商 --</option>
           ${supplierOptions.map(s => `<option value='${s}' ${selectedPresetSupplier===s?'selected':''}>${s}</option>`).join('')}
         </select>
+      </div>
+
+      <div class="form-group" style="margin-bottom:14px">
+        <label style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px;display:block">单位</label>
+        <div style="display:flex;gap:8px">
+          <select class="form-control" id="preset-sel-unit" style="flex:1" onchange="selectedPresetUnit=this.value;if(this.value==='__custom__'){document.getElementById('preset-unit-custom-input').style.display='';this.style.display='none';document.getElementById('preset-unit-custom-input').focus();}" ${!selectedPresetName?'disabled':''}>
+            <option value="">-- 请选择或自定义 --</option>
+            ${selectedPresetUnit && !customUnits.includes(selectedPresetUnit)?`<option value="${selectedPresetUnit}" selected>${selectedPresetUnit}</option>`:''}
+            ${customUnits.map(u => `<option value="${u}" ${selectedPresetUnit===u?'selected':''}>${u}</option>`).join('')}
+            <option value="__custom__">+ 自定义单位</option>
+          </select>
+          <input class="form-control" id="preset-unit-custom-input" placeholder="输入自定义单位" style="display:none;flex:1" onblur="if(!this.value.trim()){this.style.display='none';document.getElementById('preset-sel-unit').style.display='';}" onkeydown="if(event.key==='Enter'){selectedPresetUnit=this.value.trim();this.blur();}">
+        </div>
+        ${selectedPresetUnit && selectedPresetUnit !== '__custom__' ? `
+        <div style="margin-top:4px;font-size:11px;color:var(--gray-400)">
+          ${selectedPresetUnit ? `已选单位：<strong style="color:var(--success)">${selectedPresetUnit}</strong>` : '未选择单位，将使用默认"件"'}
+        </div>` : ''}
       </div>
 
       <div id="preset-stock-info" style="margin-bottom:16px"></div>
@@ -4289,6 +4603,11 @@ function onPresetNameChange() {
   selectedPresetName = document.getElementById('preset-sel-name').value;
   selectedPresetSpec = '';
   selectedPresetSupplier = '';
+  // Look up preset type and unit from combined presets
+  const presets = getCombinedPresets();
+  const preset = presets.find(x => x.name === selectedPresetName);
+  selectedPresetType = preset ? (preset.type || '') : '';
+  selectedPresetUnit = preset ? (preset.unit || '') : '';
   renderPresetDropdowns();
 }
 
@@ -4329,14 +4648,21 @@ function updatePresetStockInfo() {
         <div style="font-weight:600;margin-bottom:4px">${existing.name}</div>
         <div style="display:flex;gap:16px;color:var(--gray-500)">
           <span>编码: <strong style="color:var(--primary)">${existing.code}</strong></span>
+          <span>类型: <strong style="color:var(--primary)">${existing.type || '-'}</strong></span>
+          <span>单位: <strong style="color:var(--primary)">${existing.unit || '-'}</strong></span>
           <span>供应商: <strong>${existing.supplier || '-'}</strong></span>
           <span>库存: <strong style="color:var(--success)">${existing.qty} ${existing.unit}</strong></span>
         </div>
       </div>`;
   } else {
+    // Show preset type and unit info for new material
+    const typeDisplay = selectedPresetType || autoClassifyType(selectedPresetName) || '未分类';
+    const unitDisplay = selectedPresetUnit || '件（默认）';
     infoDiv.innerHTML = `
       <div style="background:#eff6ff;border-radius:6px;padding:10px 14px;font-size:12px;color:var(--primary)">
         &#9432; 新物料，首次入库将自动创建编码
+        ${selectedPresetType ? `<span style="margin-left:8px">预设类型：<strong>${selectedPresetType}</strong></span>` : ''}
+        <span style="margin-left:8px">单位：<strong>${unitDisplay}</strong></span>
       </div>`;
   }
 }
@@ -4364,15 +4690,24 @@ function confirmPresetSelect() {
       showToast('该物料已在库中，请直接在列表中点击【入库】', 'success');
     } else {
       const code = getNextCode();
+      // Use preset type if available, otherwise auto-classify
+      const finalType = selectedPresetType || autoClassifyType(selectedPresetName) || '其他';
+      // Use selected unit (including custom input) or default to '件'
+      let finalUnit = selectedPresetUnit;
+      const customUnitInput = document.getElementById('preset-unit-custom-input');
+      if (customUnitInput && customUnitInput.value.trim() && customUnitInput.style.display !== 'none') {
+        finalUnit = customUnitInput.value.trim();
+      }
+      if (!finalUnit || finalUnit === '__custom__') finalUnit = '件';
       const newMat = {
         id: Date.now() + Math.random(),
         code,
         name: selectedPresetName,
-        type: autoClassifyType(selectedPresetName),
-        typeMode: 'auto',
+        type: finalType,
+        typeMode: selectedPresetType ? 'preset' : 'auto',
         spec: selectedPresetSpec !== '(无规格)' ? selectedPresetSpec : '',
         qty: 0,
-        unit: '件',
+        unit: finalUnit,
         min: 0,
         price: 0,
         supplier: selectedPresetSupplier !== '(无供应商)' ? selectedPresetSupplier : '',
@@ -5050,15 +5385,22 @@ function batchEditType() {
   if (batchSelected.size === 0) return;
   const newType = prompt(`修改 ${batchSelected.size} 个物料的类型为：`, '');
   if (!newType) return;
-  const allTypes = [...new Set(materials.map(m => m.type))];
-  if (!allTypes.includes(newType) && !confirm(`「${newType}」是新类型，确认创建？`)) return;
+  const val = newType.trim();
+  const builtIn = ['电芯类','电池组类','BMS芯片类','连接器类','线束类','结构件类','PCB类','电子元器件类','其他'];
+  const allTypes = [...new Set([...materials.map(m => m.type), ...builtIn, ...customMaterialTypes])];
+  let isNew = !allTypes.includes(val);
+  if (isNew && !confirm(`「${val}」是新类型，确认创建？`)) return;
+  // If new type, add to customMaterialTypes
+  if (isNew && !builtIn.includes(val) && !customMaterialTypes.includes(val)) {
+    customMaterialTypes.push(val);
+  }
   let count = 0;
   batchSelected.forEach(sid => {
     const m = materials.find(x => x.id == sid);
-    if (m) { m.type = newType; m.typeMode = 'manual'; m.updatedAt = new Date(); count++; }
+    if (m) { m.type = val; m.typeMode = 'manual'; m.updatedAt = new Date(); count++; }
   });
   batchSelected.clear();
-  addLog('批量编辑', `修改 ${count} 个物料的类型为「${newType}」`);
+  addLog('批量编辑', `修改 ${count} 个物料的类型为「${val}」`);
   showToast(`已更新 ${count} 个物料的类型`, 'success');
   refreshCurrentView();
   saveUserData();
@@ -5218,6 +5560,16 @@ async function apiFetch(path, options = {}) {
   }
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (token) headers['Authorization'] = 'Bearer ' + token;
+  // DEBUG: 子账号 token 诊断
+  if (currentUser && currentUser._isSubAccount && !token) {
+    console.warn('[apiFetch] 子账号 token 缺失!', {
+      phone: currentUser.phone,
+      parentPhone: currentUser._parentPhone,
+      mms_token_sub: localStorage.getItem('mms_token_sub_' + currentUser.phone),
+      mms_token_parent: currentUser._parentPhone ? localStorage.getItem('mms_token_' + currentUser._parentPhone) : null,
+      mms_token_global: localStorage.getItem('mms_token')
+    });
+  }
   const res = await fetch(API_BASE + path, { ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || '请求失败');
@@ -5316,17 +5668,31 @@ async function submitAuth() {
         _parentPhone: parentUser.phone,
         navPermissions: subAccount.permissions || getDefaultNavPermissions()
       };
-      // 子账号使用父账号的 token，存储到独立的 key（不与父账号冲突）
-      const parentToken = localStorage.getItem('mms_token_' + parentUser.phone) || localStorage.getItem('mms_token');
-      if (parentToken) {
-        localStorage.setItem('mms_token_sub_' + subAccount.phone, parentToken);
+      // 使用后端返回的 token（子账号独立 session，不依赖父账号本地 token）
+      let subToken = subInfo.token;
+      // 如果后端未返回 token，尝试从父账号 localStorage 获取备用
+      if (!subToken && parentUser.phone) {
+        subToken = localStorage.getItem('mms_token_' + parentUser.phone) || localStorage.getItem('mms_token');
       }
+      if (!subToken) {
+        err.innerHTML = `子账号身份验证成功，但无法获取访问令牌。<br>
+          <span style="font-size:12px;color:var(--gray-400)">
+            原因：当前设备上没有主账号（${parentUser.phone}）的有效登录会话。<br>
+            解决：请先用主账号登录一次，或重新创建子账号以同步到服务器。
+          </span>`;
+        return;
+      }
+      localStorage.setItem('mms_token_sub_' + subAccount.phone, subToken);
+      localStorage.setItem('mms_token', subToken); // 同时设置全局 token 供 apiFetch 使用
+      // 持久化子账号登录态到 localStorage（页面刷新后可自动恢复）
+      localStorage.setItem('currentUser_sub_' + subAccount.phone, JSON.stringify(currentUser));
       document.getElementById('login-overlay').classList.add('hidden');
       applyNavPermissions();
       await loadUserData();
       showView('stockIn');
       showToast('子账号登录成功', 'success');
       startSessionTimer();
+      startDataSyncTimer(); // 启动多设备数据同步检测
       return;
     }
   }
@@ -5364,7 +5730,12 @@ async function submitAuth() {
       err.innerHTML = `无法连接到 API 服务（${API_BASE}）<br>
         <span style="font-size:11px;color:var(--gray-400)">请确认后端已启动：<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px">uvicorn main:app --host 0.0.0.0 --port 8000</code></span>`;
     } else {
-      err.textContent = e.message || '请求失败，请重试';
+      let msg = e.message || '请求失败，请重试';
+      // 手机号未注册时，追加子账号可能被删除的友好提示
+      if (msg.includes('未注册')) {
+        msg += '\n若此前该账号为子账号，可能已被管理员删除。';
+      }
+      err.textContent = msg;
     }
     console.error(e);
   } finally {
@@ -5394,6 +5765,10 @@ async function doLogin(user) {
   await loadUserData();
   showView('stockIn');
   startSessionTimer();
+  startDataSyncTimer(); // 启动多设备数据同步检测
+  
+  // 持久化主账号信息到 localStorage（确保子账号能通过本地回退路径找到父账号）
+  await saveCurrentUserWithSubs();
 }
 
 function logout(force = false) {
@@ -5404,11 +5779,13 @@ function logout(force = false) {
   const token = localStorage.getItem('mms_token');
   if (token) apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
   currentUser = null;
+  currentDataVersion = null;
+  stopDataSyncTimer(); // 停止数据同步检测
   localStorage.removeItem('mms_token');
-  // 清除所有 per-user token
+  // 清除所有 per-user token 和子账号持久化数据
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const key = localStorage.key(i);
-    if (key && key.startsWith('mms_token_')) {
+    if (key && (key.startsWith('mms_token_') || key.startsWith('currentUser_sub_'))) {
       localStorage.removeItem(key);
     }
   }
@@ -5425,6 +5802,61 @@ async function checkAuth() {
   // 初始化 IndexedDB（仅存物料数据）
   try { await openDB(); } catch(e) { console.warn('IndexedDB 初始化失败', e); }
 
+  // 1. 先尝试恢复子账号登录态（从 localStorage 读取持久化信息）
+  //    子账号优先：因为子账号登录时也会设置 mms_token，必须优先识别
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('currentUser_sub_')) {
+      try {
+        const subUser = JSON.parse(localStorage.getItem(key));
+        if (subUser && subUser._isSubAccount && subUser._parentPhone) {
+          const subToken = localStorage.getItem('mms_token_sub_' + subUser.phone);
+          if (subToken) {
+            try {
+              // 设置全局 token 让 apiFetch 使用
+              localStorage.setItem('mms_token', subToken);
+              await apiFetch('/api/auth/verify');
+              
+              // === 验证子账号是否仍存在于父账号配置中 ===
+              const verifyQuery = subUser._parentPhone ? `?owner=${encodeURIComponent(subUser._parentPhone)}` : '';
+              const verifyHeaders = subUser._parentPhone ? { 'X-Data-Owner': subUser._parentPhone } : {};
+              const parentData = await apiFetch('/api/data' + verifyQuery, { headers: verifyHeaders });
+              const parentSubs = parentData.subAccounts || [];
+              const stillValid = parentSubs.some(s => s.phone === subUser.phone);
+              
+              if (!stillValid) {
+                // 子账号已被删除，清理所有残留数据
+                localStorage.removeItem(key);
+                localStorage.removeItem('mms_token_sub_' + subUser.phone);
+                localStorage.removeItem('mms_token');
+                document.getElementById('auth-err').innerHTML = `
+                  <span style="color:var(--danger)">该子账号已被管理员删除，请联系管理员重新创建</span>
+                `;
+                return; // 停止恢复，显示登录页
+              }
+              
+              // Token 有效且子账号仍存在，恢复登录态
+              currentUser = subUser;
+              document.getElementById('login-overlay').classList.add('hidden');
+              applyNavPermissions();
+              await loadUserData();
+              showView('stockIn');
+              showToast('子账号自动登录成功', 'success');
+              startSessionTimer();
+              startDataSyncTimer(); // 启动多设备数据同步检测
+              return;
+            } catch (e) {
+              // token 已过期，清理子账号数据
+              localStorage.removeItem(key);
+              localStorage.removeItem('mms_token_sub_' + subUser.phone);
+            }
+          }
+        }
+      } catch (e) { /* 忽略解析错误 */ }
+    }
+  }
+
+  // 2. 再尝试恢复主账号登录态
   const token = localStorage.getItem('mms_token');
   if (token) {
     try {
@@ -5436,9 +5868,61 @@ async function checkAuth() {
       localStorage.removeItem('mms_token');
     }
   }
+
   const inp = document.getElementById('api-base-input');
   if (inp) inp.value = API_BASE;
   document.getElementById('login-overlay').classList.remove('hidden');
+}
+
+// ============================================================
+// 多设备数据同步：定时轮询 + 版本检测（行业推荐方案）
+// 原理：每15秒查询一次后端数据版本号，与本地比对，
+//       发现远端有新数据时自动静默刷新，无需手动 F5
+// ============================================================
+
+/** 检测远端数据是否有更新 */
+async function checkDataSync() {
+  if (!currentUser) return;
+  try {
+    const dataPhone = currentUser._isSubAccount ? currentUser._parentPhone : null;
+    const query = dataPhone
+      ? `?owner=${encodeURIComponent(dataPhone)}&sync_check=1`
+      : '?sync_check=1';
+    const headers = dataPhone ? { 'X-Data-Owner': dataPhone } : {};
+    const result = await apiFetch('/api/data' + query, { headers });
+    const remoteVersion = result.dataVersion;
+    // 首次加载或版本不一致 → 自动刷新数据
+    if (remoteVersion && remoteVersion !== currentDataVersion) {
+      if (currentDataVersion !== null) {
+        // 不是首次加载，而是远端有更新 → 静默刷新
+        console.log('[数据同步] 检测到远端更新，自动刷新数据');
+        await loadUserData();
+        refreshCurrentView();
+        showToast('数据已同步更新', 'success');
+      }
+      currentDataVersion = remoteVersion;
+    }
+  } catch (e) {
+    // 网络异常静默处理，不打扰用户
+    console.warn('[数据同步] 检测失败:', e.message);
+  }
+}
+
+/** 启动数据同步定时器 */
+function startDataSyncTimer() {
+  stopDataSyncTimer();
+  // 首次立即检测一次
+  checkDataSync();
+  // 每15秒检测一次（行业推荐间隔：10-30秒）
+  dataSyncTimer = setInterval(checkDataSync, 15000);
+}
+
+/** 停止数据同步定时器 */
+function stopDataSyncTimer() {
+  if (dataSyncTimer) {
+    clearInterval(dataSyncTimer);
+    dataSyncTimer = null;
+  }
 }
 
 // ——— 会话定时检测 ———
@@ -5668,6 +6152,7 @@ function exportUserBackup() {
     logs:         logs.slice(0, 100).map(l => ({...l, time: l.time.toISOString()})),
     codeCounter,
     customTypeRules,
+    customMaterialTypes,
     customUnits,
     materialPresets
   };
