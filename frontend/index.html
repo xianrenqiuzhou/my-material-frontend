@@ -329,6 +329,7 @@
 </style>
 <base target="_blank">
 <base target="_blank">
+<base target="_blank">
 </head>
 <body>
 
@@ -770,6 +771,36 @@ uvicorn main:app --host 0.0.0.0 --port 8100</pre>
 </div>
 
 <script>
+// ============================================================
+// FILE PROTOCOL CHECK: 禁止通过 file:// 直接打开
+// ============================================================
+if (window.location.protocol === 'file:') {
+  document.addEventListener('DOMContentLoaded', () => {
+    const overlay = document.getElementById('login-overlay');
+    if (overlay) {
+      overlay.classList.remove('hidden');
+      overlay.innerHTML = `
+        <div style="max-width:480px;margin:80px auto;padding:32px;background:#fff;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.1);text-align:center">
+          <div style="font-size:48px;margin-bottom:16px">&#128683;</div>
+          <h2 style="color:var(--danger);margin-bottom:12px">不能直接打开 HTML 文件</h2>
+          <p style="color:var(--gray-600);font-size:14px;line-height:1.6;margin-bottom:20px">
+            现代浏览器禁止 file:// 协议发送 API 请求（CORS 安全策略）。<br>
+            请通过本地 HTTP 服务器访问本系统。
+          </p>
+          <div style="background:var(--gray-50);border-radius:8px;padding:16px;text-align:left;font-size:13px">
+            <div style="font-weight:600;margin-bottom:8px;color:var(--gray-700)">解决方法（任选其一）：</div>
+            <div style="margin-bottom:8px"><strong>方法1（推荐）：</strong>在文件所在文件夹打开终端执行：</div>
+            <code style="display:block;background:#1f2937;color:#10b981;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:12px">python -m http.server 3000</code>
+            <div style="margin-bottom:8px">然后浏览器访问 <code style="background:var(--gray-200);padding:2px 6px;border-radius:3px">http://localhost:3000/material-system.html</code></div>
+            <div style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:8px"><strong>方法2：</strong>使用 VS Code 的 Live Server 插件</div>
+            <div style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:8px"><strong>方法3：</strong>使用 Nginx / Apache 部署到 Web 服务器</div>
+          </div>
+        </div>
+      `;
+    }
+  });
+}
+
 // ============================================================
 // DATA MODEL & STORE
 // ============================================================
@@ -5488,7 +5519,7 @@ document.addEventListener('keydown', e => {
 // ============================================================
 
 // ——— 后端 API 地址（可在登录页修改，保存到 localStorage）———
-let API_BASE = localStorage.getItem('mms_api_base') || 'https://my-material-api-253426-5-1427907742.sh.run.tcloudbase.com/';
+let API_BASE = localStorage.getItem('mms_api_base') || 'https://my-material-api-253426-5-1427907742.sh.run.tcloudbase.com';
 
 // 超级管理员登录区入口（连续点击5次）
 let _adminTriggerCount = 0, _adminTriggerTimer = null;
