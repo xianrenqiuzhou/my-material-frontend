@@ -117,96 +117,11 @@
   .actions { display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
   tbody tr:hover .actions { opacity: 1; }
 
-  /* Modal */
-  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity .2s; }
-  .modal-overlay.show { opacity: 1; pointer-events: all; }
-  .modal { background: #fff; border-radius: 12px; width: 520px; max-width: 95vw; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); transform: scale(.95); transition: transform .2s; }
-  .modal-overlay.show .modal { transform: scale(1); }
-  .modal-header { padding: 18px 20px 14px; border-bottom: 1px solid var(--gray-200); display: flex; align-items: center; justify-content: space-between; }
-  .modal-title { font-size: 15px; font-weight: 600; color: var(--gray-800); }
-  .modal-body { padding: 20px; }
-  .modal-footer { padding: 12px 20px; border-top: 1px solid var(--gray-200); display: flex; justify-content: flex-end; gap: 8px; }
-  .close-btn { background: none; border: none; cursor: pointer; color: var(--gray-400); font-size: 18px; padding: 2px; line-height: 1; }
-  .close-btn:hover { color: var(--gray-700); }
-
-  /* Form */
-  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  .form-full { grid-column: 1 / -1; }
-  .form-group { display: flex; flex-direction: column; gap: 5px; }
-  .form-group label { font-size: 12px; font-weight: 600; color: var(--gray-600); text-transform: uppercase; letter-spacing: .4px; }
-  .form-control { padding: 8px 10px; border: 1px solid var(--gray-200); border-radius: 6px; font-size: 13px; color: var(--gray-800); outline: none; transition: border-color .15s; }
-  .form-control:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
-  .form-hint { font-size: 11px; color: var(--gray-400); }
-  .type-preview { display: flex; align-items: center; gap: 8px; margin-top: 4px; padding: 6px 10px; background: #eff6ff; border-radius: 6px; border: 1px solid #bfdbfe; }
-  .type-preview .label { font-size: 11px; color: var(--gray-500); }
-  .type-preview .value { font-size: 12px; font-weight: 600; color: var(--primary); }
-
-  /* Rules panel */
-  .rules-panel { background: #fff; border-radius: var(--border-radius); padding: 16px; box-shadow: var(--shadow); }
-  .rules-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-  .rules-title { font-size: 14px; font-weight: 600; color: var(--gray-800); }
-  .rule-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--gray-200); border-radius: 6px; margin-bottom: 8px; font-size: 13px; }
-  .rule-icon { font-size: 16px; width: 24px; text-align: center; }
-  .rule-desc { flex: 1; color: var(--gray-600); }
-  .rule-desc strong { color: var(--gray-800); }
-  .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
-  .toggle input { opacity: 0; width: 0; height: 0; }
-  .toggle-slider { position: absolute; inset: 0; background: var(--gray-300); border-radius: 10px; cursor: pointer; transition: .2s; }
-  .toggle-slider::before { content: ''; position: absolute; width: 14px; height: 14px; background: #fff; border-radius: 50%; top: 3px; left: 3px; transition: .2s; }
-  .toggle input:checked + .toggle-slider { background: var(--primary); }
-  .toggle input:checked + .toggle-slider::before { transform: translateX(16px); }
-
-  /* Panel tabs */
-  .panel-tabs { display: flex; gap: 0; background: var(--gray-100); border-radius: 8px; padding: 3px; margin-bottom: 20px; width: fit-content; }
-  .panel-tab { padding: 6px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--gray-500); transition: all .15s; border: none; background: none; }
-  .panel-tab.active { background: #fff; color: var(--gray-800); box-shadow: var(--shadow); }
-
-  /* Import area */
-  .import-area { border: 2px dashed var(--gray-200); border-radius: 8px; padding: 24px; text-align: center; color: var(--gray-400); font-size: 13px; cursor: pointer; transition: border-color .15s; }
-  .import-area:hover { border-color: var(--primary); color: var(--primary); }
-  .import-area .icon { font-size: 28px; margin-bottom: 8px; }
-
-  /* Notifications */
-  .toast { position: fixed; bottom: 24px; right: 24px; background: var(--gray-800); color: #fff; padding: 10px 16px; border-radius: 8px; font-size: 13px; box-shadow: var(--shadow-lg); transform: translateY(60px); opacity: 0; transition: all .25s; z-index: 2000; display: flex; align-items: center; gap: 8px; }
-  .toast.show { transform: translateY(0); opacity: 1; }
-  .toast.success { background: var(--success); }
-  .toast.warning { background: var(--warning); }
-  .toast.error { background: var(--danger); }
-
-  /* Empty state */
-  .empty-state { text-align: center; padding: 48px 24px; color: var(--gray-400); }
-  .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
-  .empty-state .text { font-size: 14px; }
-
-  /* Scrollbar */
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--gray-300); border-radius: 3px; }
-
-  /* Pagination */
-  .pagination { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-top: 1px solid var(--gray-200); font-size: 12px; color: var(--gray-500); }
-  .page-btns { display: flex; gap: 4px; }
-  .page-btn { padding: 4px 10px; border: 1px solid var(--gray-200); border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px; color: var(--gray-600); transition: all .1s; }
-  .page-btn:hover { background: var(--gray-50); }
-  .page-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
-  .page-btn:disabled { opacity: .4; cursor: not-allowed; }
-
-  /* Highlight */
-  .highlight { background: #fef9c3; border-radius: 2px; }
-
-  /* Transaction styles */
-  .badge-in  { background: #dcfce7; color: #16a34a; }
-  .badge-out-tx { background: #fee2e2; color: #dc2626; }
-  .tx-qty-in  { color: var(--success); font-weight: 700; }
-  .tx-qty-out { color: var(--danger);  font-weight: 700; }
-  .btn-in  { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
-  .btn-in:hover  { background: #dcfce7; }
-  .btn-out { background: #fff1f2; color: #dc2626; border: 1px solid #fecaca; }
-  .btn-out:hover { background: #fee2e2; }
   .stock-info-box { background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; }
   .stock-info-box .name { font-weight: 600; font-size: 14px; color: var(--gray-800); }
   .stock-info-box .meta { font-size: 12px; color: var(--gray-400); margin-top: 4px; display: flex; gap: 12px; }
   .stock-info-box .current { font-size: 13px; color: var(--gray-600); margin-top: 6px; }
+  .stock-info-box .current strong { color: var(--gray-800); }
   .stock-info-box .current strong { color: var(--gray-800); }
   .direction-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
   .dir-tab { flex: 1; padding: 10px; border-radius: 8px; border: 2px solid var(--gray-200); cursor: pointer; text-align: center; font-size: 13px; font-weight: 600; transition: all .15s; background: #fff; }
@@ -318,6 +233,48 @@
   /* Image viewer */
   .img-viewer { position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:2000;display:flex;align-items:center;justify-content:center;cursor:zoom-out; }
   .img-viewer img { max-width:90vw;max-height:90vh;border-radius:8px; }
+  /* Modal - enhanced styles for nicer inbound/outbound dialogs */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.45); z-index: 1000; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity .22s ease; }
+  .modal-overlay.show { opacity: 1; pointer-events: all; }
+  .modal { background: #fff; border-radius: 12px; width: 680px; max-width: 95vw; max-height: 92vh; overflow-y: auto; box-shadow: 0 20px 40px rgba(2,6,23,0.15); transform: translateY(6px) scale(.996); transition: all .22s ease; }
+  .modal-overlay.show .modal { transform: translateY(0) scale(1); }
+  .modal-header { padding: 18px 22px; border-bottom: 1px solid #eef2f7; display: flex; align-items: center; justify-content: space-between; }
+  .modal-title { font-size: 17px; font-weight: 700; color: var(--gray-800); letter-spacing: .2px; }
+  .modal-body { padding: 18px 22px; }
+  .modal-footer { padding: 14px 22px; border-top: 1px solid #f1f5f9; display: flex; justify-content: flex-end; gap: 10px; }
+  .close-btn { background: none; border: none; cursor: pointer; color: var(--gray-400); font-size: 20px; padding: 6px; line-height: 1; border-radius:6px; }
+  .close-btn:hover { color: var(--gray-700); background: rgba(15,23,42,0.03); }
+
+  /* Stock info preview within modal */
+  .modal .stock-info-box { background: linear-gradient(180deg,#fbfdff 0,#f7fbff 100%); border: 1px solid #e6eefc; padding: 14px 16px; border-radius: 10px; margin-bottom: 14px; display:flex; flex-direction:column; gap:8px; }
+  .modal .stock-info-box .name { font-size:16px; font-weight:700; color:var(--gray-800); }
+  .modal .stock-info-box .meta { display:flex; gap:12px; color:var(--gray-500); font-size:13px; }
+  .modal .stock-info-box .current { display:flex; gap:18px; align-items:center; font-size:13px; color:var(--gray-700); }
+  .modal .stock-info-box .current strong { color:var(--primary); font-weight:700; }
+
+  /* Form layout tweaks inside modal */
+  .modal .form-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .modal .form-group label { font-size:13px; color:var(--gray-600); font-weight:600; margin-bottom:6px; }
+  .modal .form-control { padding:10px 12px; border-radius:8px; border:1px solid #e6edf6; font-size:14px; color:var(--gray-800); background:#fff; }
+  .modal .form-control:focus { box-shadow: 0 6px 18px rgba(37,99,235,0.08); border-color: var(--primary); outline: none; }
+  .modal .form-hint { font-size:12px; color:var(--gray-400); margin-top:6px; }
+
+  /* Payment / price hint */
+  .s-price-line { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
+  .s-price-line .hint-strong { color:var(--primary); font-weight:700; }
+
+  /* Buttons in modal */
+  .modal .btn { border-radius:8px; padding:8px 14px; font-weight:600; }
+  .modal .btn-primary { background:var(--primary); color:#fff; box-shadow: 0 6px 18px rgba(37,99,235,0.12); }
+  .modal .btn-primary:hover { background:var(--primary-dark); }
+  .modal .btn-secondary { background: #fff; color: var(--gray-700); border:1px solid #e6eef6; }
+
+  /* Responsive adjustments */
+  @media (max-width:760px) {
+    .modal { width: 94vw; padding: 0; }
+    .modal .form-grid { grid-template-columns: 1fr; }
+    .modal .stock-info-box { padding:12px; }
+  }
   /* Profit view styles */
   .profit-margin-pos { color: var(--success); }
   .profit-margin-neg { color: var(--danger); }
@@ -5603,7 +5560,12 @@ async function apiFetch(path, options = {}) {
   }
   const res = await fetch(API_BASE + path, { ...options, headers });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || '请求失败');
+  if (!res.ok) {
+    const err = new Error(data.detail || `请求失败 (${res.status})`);
+    err.status = res.status;
+    err.response = data;
+    throw err;
+  }
   return data;
 }
 
@@ -6073,6 +6035,20 @@ async function renderUsers() {
         </div>
       </div>` : ''}
 
+      <div class="rules-panel" style="margin-bottom:14px">
+        <div class="rules-header">
+          <span class="rules-title">用户数据导入 / 导出</span>
+          <span style="font-size:11px;color:var(--gray-400)">支持导出当前账号的数据并恢复到同一账号</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+          <button class="btn btn-primary" onclick="exportUserBackup()">📤 导出当前用户数据</button>
+          <label class="btn btn-secondary" style="cursor:pointer">📥 导入备份文件
+            <input type="file" accept=".json" style="display:none" onchange="importBackupFile(event)">
+          </label>
+        </div>
+        <p style="font-size:12px;color:var(--gray-500);margin-top:8px">导出文件为 JSON 格式，包含物料、出入库记录、日志与配置；导入后可恢复到指定账号。</p>
+      </div>
+
       <div class="rules-panel">
         ${isSuperAdmin && admins.length > 0 ? `
         <div class="perm-section">
@@ -6166,7 +6142,10 @@ function renderTopbarUser() {
       ${currentUser.role === 'superadmin' ? '<span class="expiry-badge role-superadmin" style="font-size:10px">超管</span>' : currentUser.role === 'admin' ? '<span class="expiry-badge role-admin" style="font-size:10px">管理员</span>' : expiry}
       ${subLabel}
     </div>
-    <button class="btn btn-secondary btn-sm" onclick="exportUserBackup()" title="备份数据到本地文件" style="padding:4px 8px">&#8681; 备份</button>
+    <button class="btn btn-secondary btn-sm" onclick="exportUserBackup()" title="导出当前用户全部数据" style="padding:4px 8px">&#8681; 导出数据</button>
+    <label class="btn btn-secondary btn-sm" title="导入备份文件恢复数据" style="padding:4px 8px;cursor:pointer">&#8679; 导入数据
+      <input type="file" accept=".json" style="display:none" onchange="importBackupFile(event)">
+    </label>
     <button class="btn btn-secondary btn-sm" onclick="logout()" style="padding:4px 8px">退出</button>`;
 }
 
@@ -6185,7 +6164,9 @@ function exportUserBackup() {
     customTypeRules,
     customMaterialTypes,
     customUnits,
-    materialPresets
+    materialPresets,
+    subAccounts:     currentUser._isSubAccount ? undefined : (currentUser.subAccounts || []),
+    navPermissions:  currentUser._isSubAccount ? undefined : (currentUser.navPermissions || null)
   };
   const json = JSON.stringify(backup, null, 2);
   const blob = new Blob([json], { type: 'application/json;charset=utf-8;' });
@@ -6224,17 +6205,45 @@ function importBackupFile(event) {
           body: JSON.stringify({ phone: backup.user.phone, name: backup.user.name, password: pw })
         });
       } catch(e) {
-        if (!e.message.includes('已注册')) { alert('注册失败：' + e.message); return; }
-        // 已注册则继续
+        const isAlreadyRegistered = e.status === 409 || e.message.includes('已注册') || e.message.includes('Conflict');
+        if (!isAlreadyRegistered) { alert('注册失败：' + e.message); return; }
+        // 账号已存在，则继续恢复数据
       }
 
-      // 恢复物料数据到 IndexedDB userdata 表
+      // 先删除旧备份，再写入新备份数据，确保导入覆盖旧数据
+      if (idb) {
+        await new Promise((resolve, reject) => {
+          const tx = idb.transaction('userdata', 'readwrite');
+          const req = tx.objectStore('userdata').delete(backup.user.phone);
+          req.onsuccess = () => resolve();
+          req.onerror = () => reject(req.error);
+        }).catch(() => {});
+      }
+
+      const payload = {
+        materials:       backup.materials,
+        transactions:    backup.transactions || [],
+        logs:            backup.logs || [],
+        codeCounter:     backup.codeCounter || 1000,
+        customTypeRules: backup.customTypeRules || [],
+        customMaterialTypes: backup.customMaterialTypes || [],
+        customUnits:     backup.customUnits || ['个','片','条','套','卷','批','根','块'],
+        materialPresets: backup.materialPresets || [],
+        subAccounts:     backup.subAccounts || [],
+        navPermissions:  backup.navPermissions || null
+      };
+
+      const isCurrentUserMatch = currentUser && ((currentUser._isSubAccount ? currentUser._parentPhone : currentUser.phone) === backup.user.phone);
+      if (isCurrentUserMatch) {
+        const dataPhone = currentUser._isSubAccount ? currentUser._parentPhone : null;
+        const query = dataPhone ? `?owner=${encodeURIComponent(dataPhone)}` : '';
+        const headers = dataPhone ? { 'X-Data-Owner': dataPhone } : {};
+        await apiFetch('/api/data' + query, { method: 'PUT', headers, body: JSON.stringify(payload) });
+      }
+
       await dbPut('userdata', {
         phone:        backup.user.phone,
-        materials:    backup.materials,
-        transactions: backup.transactions || [],
-        logs:         backup.logs || [],
-        codeCounter:  backup.codeCounter || 1000,
+        ...payload,
         savedAt:      new Date().toISOString()
       });
 
